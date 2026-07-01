@@ -211,7 +211,12 @@ def _update_env(key, value):
 
 
 def _load_dotenv():
-    """Простой парсер .env (без внешних зависимостей)."""
+    """
+    Парсер .env из DATA_DIR. Этот файл бот ведёт САМ (/auth дописывает сюда
+    токены), поэтому он АВТОРИТЕТНЕЕ переменных окружения из compose/env_file:
+    значения отсюда перекрывают os.environ. Так обновления через /auth всегда
+    применяются на рестарте, независимо от корневого .env.
+    """
     path = os.path.join(DATA_DIR, ".env")
     if not os.path.exists(path):
         return
@@ -221,7 +226,7 @@ def _load_dotenv():
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+            os.environ[key.strip()] = val.strip().strip('"').strip("'")
 
 
 def ensure_placeholder():

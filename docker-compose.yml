@@ -3,7 +3,13 @@ services:
     build: .
     container_name: tt-downloader-bot
     restart: unless-stopped
-    # ЕДИНЫЙ .env на томе: бот и читает его, и сам обновляет (/auth).
-    # Токен положи в ./data/.env ПЕРЕД первым запуском (см. data/.env.example).
+    # Токен можно положить в ЛЮБОЙ из двух файлов:
+    #  1) корневой ./.env  — прокидывается сюда как env-переменные (env_file);
+    #  2) ./data/.env      — лежит на томе, бот сам дописывает в него /auth.
+    # ./data/.env авторитетнее: его значения перекрывают корневой .env, поэтому
+    # обновления токенов через /auth всегда применяются после рестарта.
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./data:/data
