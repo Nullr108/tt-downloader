@@ -122,6 +122,11 @@ def _thread_id(msg):
     return None
 
 
+def _silent(chat):
+    """В группах шлём без звука (уведомления только в личке)."""
+    return bool(chat is not None and chat.type in ("group", "supergroup"))
+
+
 def _build_caption(info, kind):
     author = info.get("author") or ""
     title = info.get("title") or ""
@@ -133,7 +138,7 @@ def _build_caption(info, kind):
     return caption, title, author
 
 
-def _too_big_ui(info, kind, thread_id):
+def _too_big_ui(info, kind, thread_id, silent=False):
     """
     Сообщение "губа не дура" при превышении лимита + кнопки глав, если у
     ролика есть таймкоды. Возвращает (caption, reply_markup|None).
@@ -150,8 +155,8 @@ def _too_big_ui(info, kind, thread_id):
     url = info.get("url") or ""
     if len(chapters) >= 2 and url:
         token = uuid.uuid4().hex[:8]
-        PENDING_CH[token] = {"url": url, "kind": kind,
-                             "chapters": chapters, "thread": thread_id}
+        PENDING_CH[token] = {"url": url, "kind": kind, "chapters": chapters,
+                             "thread": thread_id, "silent": silent}
         cap += ("\n\n📑 Зато у ролика есть главы — могу прислать кусками "
                 "по таймкодам. Жми нужную:")
         return cap, _build_chapter_kb(token, chapters)
@@ -397,21 +402,25 @@ async def _animate_caption(bot, chat_id, msg_id, frames, stop_event):
             pass
 
 
-async def _send_file(bot, chat_id, thread_id, file_path, kind, caption, title, author):
+async def _send_file(bot, chat_id, thread_id, file_path, kind, caption, title,
+                     author, silent=False):
     """Отправляет готовый файл как видео/аудио в нужный топик."""
     with open(file_path, "rb") as fh:
         if kind == "video":
             await bot.send_video(chat_id, fh, caption=caption,
                                  supports_streaming=True,
-                                 message_thread_id=thread_id)
+                                 message_thread_id=thread_id,
+                                 disable_notification=silent)
         else:
             await bot.send_audio(chat_id, fh, caption=caption,
                                  title=title[:64] or None,
                                  performer=author or None,
-                                 message_thread_id=thread_id)
+                                 message_thread_id=thread_id,
+                                 disable_notification=silent)
 
 
-async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None):
+async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None,
+                          silent=False):
     """
     Универсальная доставка через эффект "гифка -> файл".
       * реклама включена  -> заглушка "здесь могла быть ваша реклама";
@@ -433,13 +442,14 @@ async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None):
 
     # если гифок нет (папка пустая) — откат на текстовый режим
     if not gif_path or not os.path.exists(gif_path):
-        return await _deliver_plain(bot, chat_id, thread_id, coro, kind, action)
+        return await _deliver_plain(bot, chat_id, thread_id, coro, kind,
+                                    action, silent)
 
     # a) анимированная заглушка как animation (GIF)
     with open(gif_path, "rb") as gif:
         ad_msg = await bot.send_animation(
             chat_id=chat_id, animation=gif, caption=first_caption,
-            message_thread_id=thread_id,
+            message_thread_id=thread_id, disable_notification=silent,
         )
 
     stop = asyncio.Event()
@@ -457,7 +467,7 @@ async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None):
         await animator
 
         if info.get("too_big"):
-            cap, kb = _too_big_ui(info, kind, thread_id)
+            cap, kb = _too_big_ui(info, kind, thread_id, silent)
             await bot.edit_message_caption(
                 chat_id=chat_id, message_id=ad_msg.message_id,
                 caption=cap, parse_mode="Markdown", reply_markup=kb,
@@ -482,7 +492,7 @@ async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None):
             except Exception:
                 # запасной путь: удалить заглушку и отправить файл заново
                 await _send_file(bot, chat_id, thread_id, file_path, kind,
-                                 caption, title, author)
+                                 caption, title, author, silent)
                 try:
                     await bot.delete_message(chat_id, ad_msg.message_id)
                 except Exception:
@@ -501,7 +511,8 @@ async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None):
             )
         except Exception:
             await bot.send_message(chat_id, f"❌ Ошибка: {_clean(e)}",
-                                   message_thread_id=thread_id)
+                                   message_thread_id=thread_id,
+                                   disable_notification=silent)
     finally:
         if file_path and os.path.exists(file_path):
             try:
@@ -510,17 +521,19 @@ async def deliver_with_ad(bot, chat_id, tag, coro, kind, thread_id=None):
                 pass
 
 
-async def _deliver_plain(bot, chat_id, thread_id, coro, kind, action):
+async def _deliver_plain(bot, chat_id, thread_id, coro, kind, action,
+                         silent=False):
     """Режим без рекламы: короткий статус -> файл."""
     status = await bot.send_message(chat_id, "⏳ Качаю…",
-                                    message_thread_id=thread_id)
+                                    message_thread_id=thread_id,
+                                    disable_notification=silent)
     file_path = None
     try:
         await bot.send_chat_action(chat_id, action, message_thread_id=thread_id)
         info = await coro
         file_path = info["path"]
         if info.get("too_big"):
-            cap, kb = _too_big_ui(info, kind, thread_id)
+            cap, kb = _too_big_ui(info, kind, thread_id, silent)
             await bot.edit_message_text(
                 cap, chat_id=chat_id, message_id=status.message_id,
                 parse_mode="Markdown", reply_markup=kb,
@@ -528,7 +541,7 @@ async def _deliver_plain(bot, chat_id, thread_id, coro, kind, action):
             return
         caption, title, author = _build_caption(info, kind)
         await _send_file(bot, chat_id, thread_id, file_path, kind,
-                         caption, title, author)
+                         caption, title, author, silent)
         try:
             await bot.delete_message(chat_id, status.message_id)
         except Exception:
@@ -541,7 +554,8 @@ async def _deliver_plain(bot, chat_id, thread_id, coro, kind, action):
                                         message_id=status.message_id)
         except Exception:
             await bot.send_message(chat_id, f"❌ Ошибка: {_clean(e)}",
-                                   message_thread_id=thread_id)
+                                   message_thread_id=thread_id,
+                                   disable_notification=silent)
     finally:
         if file_path and os.path.exists(file_path):
             try:
@@ -550,7 +564,7 @@ async def _deliver_plain(bot, chat_id, thread_id, coro, kind, action):
                 pass
 
 
-async def _process_yandex(bot, chat_id, thread_id, urls):
+async def _process_yandex(bot, chat_id, thread_id, urls, silent=False):
     """Развернуть ссылки Яндекса в треки и скачать по очереди."""
     try:
         tracks = []
@@ -558,26 +572,30 @@ async def _process_yandex(bot, chat_id, thread_id, urls):
             tracks.extend(await ymusic.expand(u))
     except ymusic.YmError as e:
         await bot.send_message(chat_id, f"🎧 Яндекс.Музыка: {_clean(e)}",
-                               message_thread_id=thread_id)
+                               message_thread_id=thread_id,
+                               disable_notification=silent)
         return
     if not tracks:
         await bot.send_message(chat_id, "🎧 По ссылке ничего не нашёл 🤔",
-                               message_thread_id=thread_id)
+                               message_thread_id=thread_id,
+                               disable_notification=silent)
         return
     if len(tracks) > 1:
         await bot.send_message(
             chat_id, f"🎧 Яндекс: нашёл {len(tracks)} треков — качаю по очереди…",
-            message_thread_id=thread_id)
+            message_thread_id=thread_id, disable_notification=silent)
     for i, tr in enumerate(tracks, 1):
         tag = f" [{i}/{len(tracks)}]" if len(tracks) > 1 else ""
         await deliver_with_ad(bot, chat_id, tag,
-                              ymusic.download_track(tr), "audio", thread_id)
+                              ymusic.download_track(tr), "audio", thread_id,
+                              silent)
 
 
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
     chat_id = update.effective_chat.id
     thread_id = _thread_id(update.message)
+    silent = _silent(update.effective_chat)   # в группах — без звука
     bot = ctx.bot
 
     yt_urls = ytdl.extract_youtube_urls(text)
@@ -602,19 +620,19 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if len(tt_urls) > 1:
             await update.message.reply_text(
                 f"🎯 TikTok: нашёл {len(tt_urls)} ссылок — качаю по очереди…",
-                message_thread_id=thread_id,
+                message_thread_id=thread_id, disable_notification=silent,
             )
         for i, url in enumerate(tt_urls, 1):
             tag = f" [{i}/{len(tt_urls)}]" if len(tt_urls) > 1 else ""
-            await deliver_with_ad(bot, chat_id, tag,
-                                  downloader.get_video(url), "video", thread_id)
+            await deliver_with_ad(bot, chat_id, tag, downloader.get_video(url),
+                                  "video", thread_id, silent)
 
     # Яндекс.Музыка — сразу качаем mp3 (трек/альбом/плейлист)
     if ym_urls:
         user = update.effective_user
         is_admin = bool(user and user.id == ADMIN_ID)
         if ymusic.has_token():
-            await _process_yandex(bot, chat_id, thread_id, ym_urls)
+            await _process_yandex(bot, chat_id, thread_id, ym_urls, silent)
         elif is_admin:
             # токена нет — бот сам предлагает войти, а ссылки запомнит
             PENDING_YM[ADMIN_ID] = {"urls": ym_urls, "chat": chat_id,
@@ -627,18 +645,19 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "🎧 Яндекс.Музыка ещё не подключена.\n"
                 "Нажми — войдёшь по коду, и я *сразу скачаю* эти ссылки 👇",
                 parse_mode="Markdown", reply_markup=kb,
-                message_thread_id=thread_id,
+                message_thread_id=thread_id, disable_notification=silent,
             )
         else:
             await update.message.reply_text(
                 "🎧 Яндекс.Музыка пока не настроена — попроси админа "
                 "подключить её.", message_thread_id=thread_id,
+                disable_notification=silent,
             )
 
     # YouTube — сначала спрашиваем видео/аудио
     if yt_urls:
         token = uuid.uuid4().hex[:8]
-        PENDING[token] = {"urls": yt_urls, "thread": thread_id}
+        PENDING[token] = {"urls": yt_urls, "thread": thread_id, "silent": silent}
         n = len(yt_urls)
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🎬 Видео", callback_data=f"yt|video|{token}"),
@@ -647,7 +666,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         word = "ссылку" if n == 1 else f"{n} ссылок"
         await update.message.reply_text(
             f"▶️ YouTube: получил {word}. Что качаем?", reply_markup=kb,
-            message_thread_id=thread_id,
+            message_thread_id=thread_id, disable_notification=silent,
         )
 
 
@@ -665,6 +684,7 @@ async def on_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     urls = job["urls"]
     thread_id = job.get("thread")
+    silent = job.get("silent", False)
     kind = "audio" if mode == "audio" else "video"
     label = "🎵 Аудио" if kind == "audio" else "🎬 Видео"
     await query.edit_message_text(
@@ -677,7 +697,7 @@ async def on_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for i, url in enumerate(urls, 1):
         tag = f" [{i}/{len(urls)}]" if len(urls) > 1 else ""
         await deliver_with_ad(bot, chat_id, tag, ytdl.get_media(url, kind),
-                              kind, thread_id)
+                              kind, thread_id, silent)
 
 
 async def on_chapter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -700,13 +720,14 @@ async def on_chapter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ch = job["chapters"][idx]
     kind = job["kind"]
     thread_id = job.get("thread")
+    silent = job.get("silent", False)
     chat_id = query.message.chat.id
     title = ch["title"] or f"Глава {idx + 1}"
     tag = f" · {title[:40]}"
     await deliver_with_ad(
         ctx.bot, chat_id, tag,
         ytdl.get_media(job["url"], kind, section=(ch["start"], ch["end"])),
-        kind, thread_id,
+        kind, thread_id, silent,
     )
 
 
