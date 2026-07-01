@@ -3,6 +3,13 @@ services:
     build: .
     container_name: tt-downloader-bot
     restart: unless-stopped
+    # Сеть хоста. На VPS с VPN-туннелем (WireGuard/OpenVPN, как на 3x-ui боксе)
+    # у туннеля урезан MTU (~1420), а дефолтный Docker-bridge ставит 1500 —
+    # тогда TLS-рукопожатие к api.telegram.org зависает (ConnectTimeout).
+    # Бот не публикует портов и работает по long polling, так что host-режим
+    # безопасен и решает проблему. (Linux-only; на Windows Docker Desktop
+    # закомментируй эту строку — там bridge и так работает.)
+    network_mode: host
     # Токен можно положить в ЛЮБОЙ из двух файлов:
     #  1) корневой ./.env  — прокидывается сюда как env-переменные (env_file);
     #  2) ./data/.env      — лежит на томе, бот сам дописывает в него /auth.
@@ -13,3 +20,8 @@ services:
         required: false
     volumes:
       - ./data:/data
+    logging:                 # чтобы логи не росли бесконечно
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
