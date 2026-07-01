@@ -244,31 +244,37 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         WELCOME, parse_mode="Markdown",
         message_thread_id=_thread_id(update.message),
+        disable_notification=_silent(update.effective_chat),
     )
 
 
 async def cmd_noads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Только для админа: включить/выключить рекламную заглушку."""
     thread_id = _thread_id(update.message)
+    silent = _silent(update.effective_chat)
     user = update.effective_user
     if not user or user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Команда только для админа.",
-                                        message_thread_id=thread_id)
+                                        message_thread_id=thread_id,
+                                        disable_notification=silent)
         return
     ADS["on"] = not ADS["on"]
     state = "🟢 включена" if ADS["on"] else "🔴 выключена"
     await update.message.reply_text(
         f"Реклама-заглушка теперь {state}.", message_thread_id=thread_id,
+        disable_notification=silent,
     )
 
 
 async def cmd_auth(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Только для админа: обновить авторизацию Яндекса / куки YouTube."""
     thread_id = _thread_id(update.message)
+    silent = _silent(update.effective_chat)
     user = update.effective_user
     if not user or user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Команда только для админа.",
-                                        message_thread_id=thread_id)
+                                        message_thread_id=thread_id,
+                                        disable_notification=silent)
         return
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎵 Обновить токен Яндекса",
@@ -283,10 +289,11 @@ async def cmd_auth(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• *YouTube* — пришлёшь мне файл `cookies.txt` (экспорт из браузера), "
         "буду использовать его при 403.",
         parse_mode="Markdown", reply_markup=kb, message_thread_id=thread_id,
+        disable_notification=silent,
     )
 
 
-async def _refresh_yandex(bot, chat_id, thread_id):
+async def _refresh_yandex(bot, chat_id, thread_id, silent=False):
     """Device-flow вход в Яндекс: шлём админу ссылку+код, ждём токен."""
     loop = asyncio.get_running_loop()
 
@@ -302,7 +309,7 @@ async def _refresh_yandex(bot, chat_id, thread_id):
                 f"2️⃣ Введи код: `{code.user_code}`\n\n"
                 f"Жду подтверждения…",
                 parse_mode="Markdown", reply_markup=kb,
-                message_thread_id=thread_id,
+                message_thread_id=thread_id, disable_notification=silent,
             ),
             loop,
         ).result()
@@ -311,18 +318,23 @@ async def _refresh_yandex(bot, chat_id, thread_id):
         token = await asyncio.to_thread(ymusic.device_auth_sync, on_code)
     except Exception as e:
         await bot.send_message(chat_id, f"❌ Не удалось войти: {_clean(e)}",
-                               message_thread_id=thread_id)
+                               message_thread_id=thread_id,
+                               disable_notification=silent)
         return
     _update_env("YANDEX_TOKEN", token)
     ymusic.reset_client()
     await bot.send_message(chat_id, "✅ Токен Яндекса обновлён и сохранён.",
-                           message_thread_id=thread_id)
+                           message_thread_id=thread_id,
+                           disable_notification=silent)
     # если админ пришёл со ссылкой Яндекса до входа — сразу докачиваем
     job = PENDING_YM.pop(ADMIN_ID, None)
     if job:
+        jsilent = job.get("silent", False)
         await bot.send_message(job["chat"], "▶️ Продолжаю с твоими ссылками…",
-                               message_thread_id=job["thread"])
-        await _process_yandex(bot, job["chat"], job["thread"], job["urls"])
+                               message_thread_id=job["thread"],
+                               disable_notification=jsilent)
+        await _process_yandex(bot, job["chat"], job["thread"], job["urls"],
+                              jsilent)
 
 
 async def on_auth_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -338,7 +350,8 @@ async def on_auth_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if what == "yandex":
         await query.edit_message_text("🎵 Запускаю вход в Яндекс…")
-        await _refresh_yandex(ctx.bot, chat_id, thread_id)
+        await _refresh_yandex(ctx.bot, chat_id, thread_id,
+                              _silent(query.message.chat))
     elif what == "ytcookies":
         AWAIT_COOKIES.add(ADMIN_ID)
         await query.edit_message_text(
@@ -352,8 +365,9 @@ async def on_auth_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user and update.effective_user.id == ADMIN_ID:
         AWAIT_COOKIES.discard(ADMIN_ID)
-    await update.message.reply_text("Ок, отменил.",
-                                    message_thread_id=_thread_id(update.message))
+    await update.message.reply_text(
+        "Ок, отменил.", message_thread_id=_thread_id(update.message),
+        disable_notification=_silent(update.effective_chat))
 
 
 async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -362,6 +376,7 @@ async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not user or user.id != ADMIN_ID or ADMIN_ID not in AWAIT_COOKIES:
         return
     thread_id = _thread_id(update.message)
+    silent = _silent(update.effective_chat)
     doc = update.message.document
     try:
         tg_file = await doc.get_file()
@@ -370,13 +385,14 @@ async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await tg_file.download_to_drive(dest)
     except Exception as e:
         await update.message.reply_text(f"❌ Не смог сохранить файл: {_clean(e)}",
-                                        message_thread_id=thread_id)
+                                        message_thread_id=thread_id,
+                                        disable_notification=silent)
         return
     _update_env("YT_COOKIES", dest)
     AWAIT_COOKIES.discard(ADMIN_ID)
     await update.message.reply_text(
         "✅ Куки YouTube сохранены — буду использовать их при загрузке.",
-        message_thread_id=thread_id,
+        message_thread_id=thread_id, disable_notification=silent,
     )
 
 
@@ -636,7 +652,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif is_admin:
             # токена нет — бот сам предлагает войти, а ссылки запомнит
             PENDING_YM[ADMIN_ID] = {"urls": ym_urls, "chat": chat_id,
-                                    "thread": thread_id}
+                                    "thread": thread_id, "silent": silent}
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("🎵 Войти в Яндекс",
                                      callback_data="auth|yandex")
@@ -686,11 +702,11 @@ async def on_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     thread_id = job.get("thread")
     silent = job.get("silent", False)
     kind = "audio" if mode == "audio" else "video"
-    label = "🎵 Аудио" if kind == "audio" else "🎬 Видео"
-    await query.edit_message_text(
-        f"{label} — качаю {len(urls)} шт., по очереди…"
-        if len(urls) > 1 else f"{label} — качаю…"
-    )
+    # убираем сообщение-вопрос «Что качаем?» — дальше говорит сама заглушка
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
 
     chat_id = query.message.chat.id
     bot = ctx.bot
