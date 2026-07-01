@@ -1,0 +1,15 @@
+token.txt
+.env
+cookies.txt
+# секреты на docker-томе (пример оставляем)
+data/.env
+data/token.txt
+data/cookies.txt
+!data/.env.example
+ad_placeholder.gif
+__pycache__/
+*.pyc
+bin/
+*.mp4
+.venv/
+venv/

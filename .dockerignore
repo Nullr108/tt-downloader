@@ -1,0 +1,16 @@
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+bin/
+data/
+.env
+token.txt
+cookies.txt
+ad_placeholder.gif
+*.mp4
+_probe.txt
+*.md

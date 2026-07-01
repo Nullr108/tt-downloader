@@ -1,0 +1,7 @@
+python-telegram-bot>=21.0
+httpx
+Pillow
+yt-dlp
+imageio-ffmpeg
+yandex-music
+aiolimiter

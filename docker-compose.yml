@@ -1,0 +1,9 @@
+services:
+  ttbot:
+    build: .
+    container_name: tt-downloader-bot
+    restart: unless-stopped
+    # ЕДИНЫЙ .env на томе: бот и читает его, и сам обновляет (/auth).
+    # Токен положи в ./data/.env ПЕРЕД первым запуском (см. data/.env.example).
+    volumes:
+      - ./data:/data
