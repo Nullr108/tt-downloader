@@ -749,6 +749,14 @@ async def on_chapter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 def build_application(token):
     builder = Application.builder().token(token)
+    # Опциональный HTTP/SOCKS5-прокси для VPS, где Telegram недоступен
+    # напрямую. Важно задать прокси и для обычных Bot API-запросов, и
+    # отдельно для long polling (getUpdates).
+    proxy = os.environ.get("TELEGRAM_PROXY", "").strip()
+    if proxy:
+        builder = builder.proxy(proxy).get_updates_proxy(proxy)
+        # Не выводим URL: в нём могут находиться логин и пароль.
+        log.info("Прокси Telegram включён")
     # авто-троттлинг и повтор при 429 Too Many Requests
     builder = builder.rate_limiter(AIORateLimiter())
     # опциональный локальный Bot API server -> файлы до ~2 ГБ
