@@ -15,6 +15,13 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+
+def _proxy_url() -> str:
+    """Прокси для yt-dlp; по умолчанию используем прокси Telegram."""
+    return (os.environ.get("YT_PROXY", "").strip()
+            or os.environ.get("TELEGRAM_PROXY", "").strip())
+
+
 # лимит отправки файла ботом. Обычный Bot API ~50 МБ; локальный Bot API
 # server поднимает лимит до ~2 ГБ. Управляется env MAX_UPLOAD_MB.
 def max_bytes() -> int:
@@ -143,7 +150,11 @@ def _download_sync(url: str, mode: str, section=None) -> dict:
         # YouTube сейчас отдаёт форматы стабильно только через android-клиент
         # (web/ios/tv ловят "No formats"/DRM/403). android + web как запас.
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "socket_timeout": 60,
     }
+    proxy = _proxy_url()
+    if proxy:
+        base["proxy"] = proxy
     if ffdir:
         base["ffmpeg_location"] = ffdir
     # нарезка по таймкодам [start,end] (для скачивания глав кусками)
@@ -243,7 +254,11 @@ def _probe_sync(url: str) -> dict:
         "quiet": True, "no_warnings": True, "no_color": True,
         "noplaylist": True, "skip_download": True,
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "socket_timeout": 60,
     }
+    proxy = _proxy_url()
+    if proxy:
+        opts["proxy"] = proxy
     cookies = os.environ.get("YT_COOKIES", "").strip()
     if cookies and os.path.exists(cookies):
         opts["cookiefile"] = cookies

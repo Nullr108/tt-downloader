@@ -102,7 +102,12 @@ async def _ytdlp_fallback(url: str) -> dict:
             "quiet": True,
             "no_warnings": True,
             "format": "best[ext=mp4]/best",
+            "socket_timeout": 60,
         }
+        proxy = (os.environ.get("MEDIA_PROXY", "").strip()
+                 or os.environ.get("TELEGRAM_PROXY", "").strip())
+        if proxy:
+            opts["proxy"] = proxy
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             path = ydl.prepare_filename(info)
